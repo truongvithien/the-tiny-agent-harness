@@ -14,6 +14,7 @@ from .types import (
     VerificationResult,
 )
 from .tools import FunctionTool, Tool, ToolRegistry
+from .policy import ApprovalCallback, Policy, RiskPolicy, authorize
 
 __version__ = "0.1.0"
 
@@ -32,5 +33,9 @@ __all__ = [
     "Tool",
     "FunctionTool",
     "ToolRegistry",
+    "Policy",
+    "RiskPolicy",
+    "ApprovalCallback",
+    "authorize",
     "__version__",
 ]
