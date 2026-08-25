@@ -1,26 +1,12 @@
 from __future__ import annotations
 
-import dataclasses
+from collections.abc import Mapping
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol, cast
-
-
-class _FrozenDict(dict[str, object]):
-    def _immutable(self, *args: object, **kwargs: object) -> None:
-        del args, kwargs
-        raise TypeError("event payload is immutable")
-
-    __setitem__ = _immutable
-    __delitem__ = _immutable
-    clear = _immutable
-    pop = _immutable
-    popitem = _immutable
-    setdefault = _immutable
-    update = _immutable
-    __ior__ = _immutable
+from types import MappingProxyType
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -29,7 +15,7 @@ class Event:
     timestamp: str
     run_id: str
     kind: str
-    payload: dict[str, object]
+    payload: Mapping[str, object]
 
 
 class EventSink(Protocol):
@@ -48,11 +34,19 @@ def _normalize(value: object, secrets: tuple[str, ...], limit: int) -> object:
             return cleaned
         return cleaned if len(cleaned) <= limit else cleaned[:limit] + "…[TRUNCATED]"
     if isinstance(value, dict):
-        return _FrozenDict(
+        return MappingProxyType(
             {str(key): _normalize(item, secrets, limit) for key, item in value.items()}
         )
     if isinstance(value, (list, tuple)):
         return tuple(_normalize(item, secrets, limit) for item in value)
+    return value
+
+
+def _thaw(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
     return value
 
 
@@ -83,9 +77,11 @@ class MemoryEventSink:
             timestamp=datetime.now(UTC).isoformat(),
             run_id=self._run_id,
             kind=kind,
-            payload=cast(
-                dict[str, object],
-                _normalize(payload, self._secrets, self._max_string_length),
+            payload=MappingProxyType(
+                {
+                    str(key): _normalize(value, self._secrets, self._max_string_length)
+                    for key, value in payload.items()
+                }
             ),
         )
         self._events.append(event)
@@ -115,6 +111,13 @@ class JsonlEventSink:
     def record(self, kind: str, payload: dict[str, object]) -> Event:
         event = self._memory.record(kind, payload)
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        serialized = {
+            "sequence": event.sequence,
+            "timestamp": event.timestamp,
+            "run_id": event.run_id,
+            "kind": event.kind,
+            "payload": _thaw(event.payload),
+        }
         with self._path.open("a", encoding="utf-8") as trace:
-            trace.write(json.dumps(dataclasses.asdict(event), sort_keys=True) + "\n")
+            trace.write(json.dumps(serialized, sort_keys=True) + "\n")
         return event

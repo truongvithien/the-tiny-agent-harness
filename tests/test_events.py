@@ -63,6 +63,8 @@ def test_memory_event_payload_cannot_be_mutated_through_returned_event() -> None
     with pytest.raises(TypeError):
         event.payload["status"] = "tampered"
     with pytest.raises(TypeError):
+        dict.__setitem__(event.payload, "status", "tampered")
+    with pytest.raises(TypeError):
         event.payload["details"]["steps"] = ["tampered"]
     with pytest.raises(AttributeError):
         event.payload["details"]["steps"].append("tampered")
