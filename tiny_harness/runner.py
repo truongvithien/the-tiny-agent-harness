@@ -17,6 +17,7 @@ from tiny_harness.types import (
     RunStatus,
     ToolCall,
     ToolResult,
+    VerificationResult,
 )
 from tiny_harness.verification import Verifier
 
@@ -83,19 +84,31 @@ class Runner:
                     context, self.tools.specifications()
                 )
             except Exception as error:
-                self.events.record(
-                    "model_error",
-                    {"type": type(error).__name__, "message": str(error)},
-                )
+                return self._fail_boundary(started.run_id, "model", error)
+            if monotonic() >= deadline:
                 return self._finish(
                     started.run_id,
-                    RunStatus.FAILED,
+                    RunStatus.BUDGET_EXHAUSTED,
                     None,
-                    f"model error: {error}",
+                    "time budget exhausted",
                 )
-            self.events.record("model_decision", _serialize_decision(decision))
+            try:
+                if not isinstance(decision, (ToolCall, FinalAnswer)):
+                    raise TypeError("model returned an invalid decision")
+                serialized_decision = _serialize_decision(decision)
+            except Exception as error:
+                return self._fail_boundary(started.run_id, "model", error)
+            self.events.record("model_decision", serialized_decision)
             if isinstance(decision, FinalAnswer):
-                verification = self.verifier.verify(context, decision)
+                if not decision.text.strip():
+                    verification = VerificationResult(False, "final answer is empty")
+                else:
+                    try:
+                        verification = self.verifier.verify(context, decision)
+                    except Exception as error:
+                        return self._fail_boundary(
+                            started.run_id, "verification", error
+                        )
                 self.events.record("verification", asdict(verification))
                 status = (
                     RunStatus.SUCCEEDED if verification.accepted else RunStatus.FAILED
@@ -110,7 +123,12 @@ class Runner:
             if tool is None:
                 result = self.tools.execute(decision)
             else:
-                policy_decision = authorize(tool, decision, self.policy, self.approval)
+                try:
+                    policy_decision = authorize(
+                        tool, decision, self.policy, self.approval
+                    )
+                except Exception as error:
+                    return self._fail_boundary(started.run_id, "policy", error)
                 self.events.record(
                     "policy_decision",
                     {"tool": decision.name, "decision": policy_decision.value},
@@ -146,6 +164,21 @@ class Runner:
             RunStatus.BUDGET_EXHAUSTED,
             None,
             "iteration budget exhausted",
+        )
+
+    def _fail_boundary(
+        self,
+        run_id: str,
+        boundary: str,
+        error: Exception,
+    ) -> RunResult:
+        error_type = type(error).__name__
+        self.events.record(f"{boundary}_error", {"type": error_type})
+        return self._finish(
+            run_id,
+            RunStatus.FAILED,
+            None,
+            f"{boundary} error: {error_type}",
         )
 
     def _finish(

@@ -1,5 +1,5 @@
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import tiny_harness
@@ -8,10 +8,11 @@ from tiny_harness.events import MemoryEventSink
 from tiny_harness.models import ModelAdapter, ScriptedModel
 from tiny_harness.policy import RiskPolicy
 from tiny_harness.runner import RunConfig, Runner
-from tiny_harness.tools import FunctionTool, ToolRegistry
+from tiny_harness.tools import FunctionTool, Tool, ToolRegistry
 from tiny_harness.types import (
     FinalAnswer,
     ModelDecision,
+    PolicyDecision,
     Risk,
     RunContext,
     RunStatus,
@@ -203,7 +204,7 @@ def test_runner_records_model_error_and_finishes_as_failed() -> None:
 
     assert result.status is RunStatus.FAILED
     assert result.answer is None
-    assert "scripted model has no remaining decisions" in result.reason
+    assert result.reason == "model error: RuntimeError"
     assert [event.kind for event in events.events] == [
         "run_started",
         "model_error",
@@ -274,6 +275,263 @@ def test_runner_finishes_as_budget_exhausted_when_deadline_passes(
     assert result.reason == "time budget exhausted"
     assert [event.kind for event in events.events] == ["run_started", "run_finished"]
     assert result.event_count == 2
+
+
+def test_runner_rechecks_deadline_after_model_before_accepting_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [10.0]
+    verification_calls = 0
+    tool_calls = 0
+
+    class SlowModel:
+        def next_decision(
+            self,
+            _context: RunContext,
+            _tool_specs: Sequence[Mapping[str, Any]],
+        ) -> ModelDecision:
+            clock[0] = 16.0
+            return FinalAnswer("Too late")
+
+    class CountingVerifier:
+        def verify(
+            self, _context: RunContext, _answer: FinalAnswer
+        ) -> VerificationResult:
+            nonlocal verification_calls
+            verification_calls += 1
+            return VerificationResult(True, "accepted")
+
+    def count_tool(_arguments: Mapping[str, Any]) -> ToolResult:
+        nonlocal tool_calls
+        tool_calls += 1
+        return ToolResult(ok=True)
+
+    monkeypatch.setattr("tiny_harness.runner.monotonic", lambda: clock[0])
+    events = MemoryEventSink(run_id="run-slow-model")
+    runner = Runner(
+        model=SlowModel(),
+        tools=ToolRegistry(
+            [
+                FunctionTool(
+                    name="unused",
+                    description="Must not execute.",
+                    input_schema={"type": "object"},
+                    risk=Risk.READ,
+                    handler=count_tool,
+                )
+            ]
+        ),
+        policy=RiskPolicy(),
+        approval=lambda _tool, _call: False,
+        events=events,
+        verifier=CountingVerifier(),
+        config=RunConfig(timeout_seconds=5),
+    )
+
+    result = runner.run("Answer before timeout", ("Meet the deadline",))
+
+    assert result.status is RunStatus.BUDGET_EXHAUSTED
+    assert result.answer is None
+    assert verification_calls == 0
+    assert tool_calls == 0
+    assert [event.kind for event in events.events] == ["run_started", "run_finished"]
+
+
+def test_runner_rejects_blank_answer_before_accepting_verifier_can_approve() -> None:
+    verification_calls = 0
+
+    class AcceptEverything:
+        def verify(
+            self, _context: RunContext, _answer: FinalAnswer
+        ) -> VerificationResult:
+            nonlocal verification_calls
+            verification_calls += 1
+            return VerificationResult(True, "accepted")
+
+    events = MemoryEventSink(run_id="run-blank-answer")
+    runner = Runner(
+        model=ScriptedModel([FinalAnswer("   ")]),
+        tools=ToolRegistry(),
+        policy=RiskPolicy(),
+        approval=lambda _tool, _call: False,
+        events=events,
+        verifier=AcceptEverything(),
+    )
+
+    result = runner.run("Return evidence", ("Answer must not be blank",))
+
+    assert result.status is RunStatus.FAILED
+    assert result.answer is None
+    assert result.reason == "final answer is empty"
+    assert verification_calls == 0
+    assert [event.kind for event in events.events] == [
+        "run_started",
+        "model_decision",
+        "verification",
+        "run_finished",
+    ]
+
+
+def test_runner_converts_verifier_exception_to_safe_failed_result() -> None:
+    secret = "sensitive verifier detail"
+
+    class RaisingVerifier:
+        def verify(
+            self, _context: RunContext, _answer: FinalAnswer
+        ) -> VerificationResult:
+            raise RuntimeError(secret)
+
+    events = MemoryEventSink(run_id="run-verifier-error")
+    runner = Runner(
+        model=ScriptedModel([FinalAnswer("Evidence")]),
+        tools=ToolRegistry(),
+        policy=RiskPolicy(),
+        approval=lambda _tool, _call: False,
+        events=events,
+        verifier=RaisingVerifier(),
+    )
+
+    result = runner.run("Verify evidence", ("Evidence is valid",))
+
+    assert result.status is RunStatus.FAILED
+    assert result.answer is None
+    assert result.reason == "verification error: RuntimeError"
+    assert secret not in result.reason
+    assert [event.kind for event in events.events] == [
+        "run_started",
+        "model_decision",
+        "verification_error",
+        "run_finished",
+    ]
+    assert events.events[2].payload == {"type": "RuntimeError"}
+
+
+@pytest.mark.parametrize(
+    ("failure_source", "error_type"),
+    [("policy", "PermissionError"), ("approval", "ConnectionError")],
+)
+def test_runner_converts_authorization_exception_to_safe_failed_result(
+    failure_source: str,
+    error_type: str,
+) -> None:
+    secret = "sensitive authorization detail"
+    tool_calls = 0
+
+    class RaisingPolicy:
+        def evaluate(self, _tool: Tool, _call: ToolCall) -> PolicyDecision:
+            raise PermissionError(secret)
+
+    def raising_approval(_tool: Tool, _call: ToolCall) -> bool:
+        raise ConnectionError(secret)
+
+    def count_tool(_arguments: Mapping[str, Any]) -> ToolResult:
+        nonlocal tool_calls
+        tool_calls += 1
+        return ToolResult(ok=True)
+
+    events = MemoryEventSink(run_id=f"run-{failure_source}-error")
+    runner = Runner(
+        model=ScriptedModel([ToolCall("publish", {})]),
+        tools=ToolRegistry(
+            [
+                FunctionTool(
+                    name="publish",
+                    description="Publish a value.",
+                    input_schema={"type": "object"},
+                    risk=Risk.CONSEQUENTIAL,
+                    handler=count_tool,
+                )
+            ]
+        ),
+        policy=RaisingPolicy() if failure_source == "policy" else RiskPolicy(),
+        approval=(
+            raising_approval
+            if failure_source == "approval"
+            else lambda _tool, _call: False
+        ),
+        events=events,
+        verifier=AcceptFinalAnswer(),
+    )
+
+    result = runner.run("Publish safely", ("Respect authorization",))
+
+    assert result.status is RunStatus.FAILED
+    assert result.answer is None
+    assert result.reason == f"policy error: {error_type}"
+    assert secret not in result.reason
+    assert tool_calls == 0
+    assert [event.kind for event in events.events] == [
+        "run_started",
+        "model_decision",
+        "policy_error",
+        "run_finished",
+    ]
+    assert events.events[2].payload == {"type": error_type}
+
+
+def test_runner_converts_malformed_model_decision_to_safe_failed_result() -> None:
+    secret = "sensitive malformed output"
+
+    class MalformedModel:
+        def next_decision(
+            self,
+            _context: RunContext,
+            _tool_specs: Sequence[Mapping[str, Any]],
+        ) -> ModelDecision:
+            return cast(ModelDecision, {"unexpected": secret})
+
+    events = MemoryEventSink(run_id="run-malformed-model")
+    runner = Runner(
+        model=MalformedModel(),
+        tools=ToolRegistry(),
+        policy=RiskPolicy(),
+        approval=lambda _tool, _call: False,
+        events=events,
+        verifier=AcceptFinalAnswer(),
+    )
+
+    result = runner.run("Ask the model", ("Return a valid decision",))
+
+    assert result.status is RunStatus.FAILED
+    assert result.answer is None
+    assert result.reason == "model error: TypeError"
+    assert secret not in result.reason
+    assert [event.kind for event in events.events] == [
+        "run_started",
+        "model_error",
+        "run_finished",
+    ]
+    assert events.events[1].payload == {"type": "TypeError"}
+
+
+def test_runner_does_not_expose_model_exception_message() -> None:
+    secret = "sensitive model detail"
+
+    class RaisingModel:
+        def next_decision(
+            self,
+            _context: RunContext,
+            _tool_specs: Sequence[Mapping[str, Any]],
+        ) -> ModelDecision:
+            raise RuntimeError(secret)
+
+    events = MemoryEventSink(run_id="run-safe-model-error")
+    runner = Runner(
+        model=RaisingModel(),
+        tools=ToolRegistry(),
+        policy=RiskPolicy(),
+        approval=lambda _tool, _call: False,
+        events=events,
+        verifier=AcceptFinalAnswer(),
+    )
+
+    result = runner.run("Ask the model", ("Return an answer",))
+
+    assert result.status is RunStatus.FAILED
+    assert result.reason == "model error: RuntimeError"
+    assert secret not in result.reason
+    assert events.events[1].payload == {"type": "RuntimeError"}
+    assert events.events[-1].kind == "run_finished"
 
 
 @pytest.mark.parametrize(
