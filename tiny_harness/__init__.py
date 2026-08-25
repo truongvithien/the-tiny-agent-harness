@@ -13,6 +13,7 @@ from .types import (
     ToolResult,
     VerificationResult,
 )
+from .tools import FunctionTool, Tool, ToolRegistry
 
 __version__ = "0.1.0"
 
@@ -28,5 +29,8 @@ __all__ = [
     "ToolCall",
     "ToolResult",
     "VerificationResult",
+    "Tool",
+    "FunctionTool",
+    "ToolRegistry",
     "__version__",
 ]
