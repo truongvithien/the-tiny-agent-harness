@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "the-tiny-agent-harness"
+version = "0.1.0"
+description = "A beginner course for building a tiny, observable agent harness."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
