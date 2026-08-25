@@ -93,8 +93,7 @@ class Runner:
                     "time budget exhausted",
                 )
             try:
-                if not isinstance(decision, (ToolCall, FinalAnswer)):
-                    raise TypeError("model returned an invalid decision")
+                _validate_decision(decision)
                 serialized_decision = _serialize_decision(decision)
             except Exception as error:
                 return self._fail_boundary(started.run_id, "model", error)
@@ -193,6 +192,16 @@ class Runner:
             {"status": status.value, "answer": answer, "reason": reason},
         )
         return RunResult(status, answer, reason, run_id, self.events.count)
+
+
+def _validate_decision(decision: object) -> None:
+    if isinstance(decision, FinalAnswer):
+        if not isinstance(decision.text, str):
+            raise TypeError("final answer text must be a string")
+        return
+    if isinstance(decision, ToolCall):
+        return
+    raise TypeError("model returned an invalid decision")
 
 
 def _serialize_decision(decision: ToolCall | FinalAnswer) -> dict[str, object]:

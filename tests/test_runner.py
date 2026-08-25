@@ -504,6 +504,39 @@ def test_runner_converts_malformed_model_decision_to_safe_failed_result() -> Non
     assert events.events[1].payload == {"type": "TypeError"}
 
 
+def test_runner_rejects_non_string_final_answer_before_serialization() -> None:
+    secret = "sensitive malformed answer"
+
+    class SensitiveText:
+        def __repr__(self) -> str:
+            return secret
+
+    malformed_answer = FinalAnswer(cast(str, SensitiveText()))
+    events = MemoryEventSink(run_id="run-malformed-answer")
+    runner = Runner(
+        model=ScriptedModel([malformed_answer]),
+        tools=ToolRegistry(),
+        policy=RiskPolicy(),
+        approval=lambda _tool, _call: False,
+        events=events,
+        verifier=AcceptFinalAnswer(),
+    )
+
+    result = runner.run("Ask the model", ("Return a valid answer",))
+
+    assert result.status is RunStatus.FAILED
+    assert result.answer is None
+    assert result.reason == "model error: TypeError"
+    assert secret not in result.reason
+    assert [event.kind for event in events.events] == [
+        "run_started",
+        "model_error",
+        "run_finished",
+    ]
+    assert events.events[1].payload == {"type": "TypeError"}
+    assert secret not in repr(events.events)
+
+
 def test_runner_does_not_expose_model_exception_message() -> None:
     secret = "sensitive model detail"
 
