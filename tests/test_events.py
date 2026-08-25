@@ -3,6 +3,7 @@ import json
 import pytest
 
 from tiny_harness.events import EventSink, JsonlEventSink, MemoryEventSink
+from tiny_harness.types import ToolCall
 
 
 def test_memory_sink_assigns_monotonic_sequence_numbers() -> None:
@@ -33,13 +34,38 @@ def test_sink_redacts_overlapping_secrets_longest_first() -> None:
     assert sink.events[0].payload == {"token": "[REDACTED]"}
 
 
-def test_jsonl_sink_writes_one_json_object_per_event(tmp_path) -> None:
+def test_jsonl_sink_appends_events_in_order_without_replacing_earlier_rows(tmp_path) -> None:
     path = tmp_path / "trace.jsonl"
     sink = JsonlEventSink(path=path, run_id="run-1")
     sink.record("run_started", {"task": "demo"})
+    sink.record("run_finished", {"status": "succeeded"})
     rows = [json.loads(line) for line in path.read_text().splitlines()]
-    assert rows[0]["kind"] == "run_started"
-    assert rows[0]["run_id"] == "run-1"
+    assert [row["sequence"] for row in rows] == [1, 2]
+    assert [row["kind"] for row in rows] == ["run_started", "run_finished"]
+    assert rows[0]["payload"] == {"task": "demo"}
+    assert rows[1]["payload"] == {"status": "succeeded"}
+    assert {row["run_id"] for row in rows} == {"run-1"}
+
+
+def test_jsonl_sink_redacts_and_serializes_deeply_frozen_arguments(tmp_path) -> None:
+    path = tmp_path / "trace.jsonl"
+    call = ToolCall(
+        "publish",
+        {"request": {"recipients": ["learner@example.test"], "token": "secret"}},
+    )
+    sink = JsonlEventSink(path=path, run_id="run-1", secrets=("secret",))
+
+    sink.record("model_decision", {"arguments": call.arguments})
+
+    row = json.loads(path.read_text())
+    assert row["payload"] == {
+        "arguments": {
+            "request": {
+                "recipients": ["learner@example.test"],
+                "token": "[REDACTED]",
+            }
+        }
+    }
 
 
 def test_sink_exposes_event_sink_count() -> None:

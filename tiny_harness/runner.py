@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
+from threading import Event, Thread
 from time import monotonic
+from typing import Generic, TypeVar, cast
 
 from tiny_harness.events import EventSink
 from tiny_harness.models import ModelAdapter
-from tiny_harness.policy import ApprovalCallback, Policy, authorize
+from tiny_harness.policy import (
+    ApprovalCallback,
+    Policy,
+    _require_approval_result,
+    _require_policy_decision,
+)
 from tiny_harness.tools import ToolRegistry
 from tiny_harness.types import (
     FinalAnswer,
@@ -20,6 +27,71 @@ from tiny_harness.types import (
     VerificationResult,
 )
 from tiny_harness.verification import Verifier
+
+
+_T = TypeVar("_T")
+
+
+class _DeadlineExceeded(Exception):
+    def __init__(
+        self,
+        *,
+        call_started: bool,
+        call_may_still_be_running: bool,
+    ) -> None:
+        super().__init__("time budget exhausted")
+        self.call_started = call_started
+        self.call_may_still_be_running = call_may_still_be_running
+
+
+@dataclass(frozen=True)
+class _CallOutcome(Generic[_T]):
+    completed_at: float
+    value: _T | None = None
+    error: BaseException | None = None
+
+
+def _call_before_deadline(operation: Callable[[], _T], deadline: float) -> _T:
+    """Bound the runner's wait; a timed-out synchronous call may keep running."""
+    if monotonic() >= deadline:
+        raise _DeadlineExceeded(
+            call_started=False,
+            call_may_still_be_running=False,
+        )
+
+    completed = Event()
+    outcomes: list[_CallOutcome[_T]] = []
+
+    def invoke() -> None:
+        try:
+            value = operation()
+        except BaseException as error:
+            outcomes.append(_CallOutcome(completed_at=monotonic(), error=error))
+        else:
+            outcomes.append(_CallOutcome(completed_at=monotonic(), value=value))
+        finally:
+            completed.set()
+
+    worker = Thread(target=invoke, daemon=True)
+    worker.start()
+    remaining = deadline - monotonic()
+    if remaining > 0:
+        completed.wait(remaining)
+    if not completed.is_set():
+        raise _DeadlineExceeded(
+            call_started=True,
+            call_may_still_be_running=True,
+        )
+
+    outcome = outcomes[0]
+    if outcome.completed_at >= deadline:
+        raise _DeadlineExceeded(
+            call_started=True,
+            call_may_still_be_running=False,
+        )
+    if outcome.error is not None:
+        raise outcome.error
+    return cast(_T, outcome.value)
 
 
 @dataclass(frozen=True)
@@ -67,11 +139,13 @@ class Runner:
         )
         for iteration in range(1, self.config.max_iterations + 1):
             if monotonic() >= deadline:
-                return self._finish(
+                return self._finish_timeout(
                     started.run_id,
-                    RunStatus.BUDGET_EXHAUSTED,
-                    None,
-                    "time budget exhausted",
+                    "run",
+                    _DeadlineExceeded(
+                        call_started=False,
+                        call_may_still_be_running=False,
+                    ),
                 )
             context = RunContext(
                 task,
@@ -80,18 +154,16 @@ class Runner:
                 self.config.max_iterations - iteration,
             )
             try:
-                decision = self.model.next_decision(
-                    context, self.tools.specifications()
+                decision = _call_before_deadline(
+                    lambda: self.model.next_decision(
+                        context, self.tools.specifications()
+                    ),
+                    deadline,
                 )
+            except _DeadlineExceeded as timeout:
+                return self._finish_timeout(started.run_id, "model", timeout)
             except Exception as error:
                 return self._fail_boundary(started.run_id, "model", error)
-            if monotonic() >= deadline:
-                return self._finish(
-                    started.run_id,
-                    RunStatus.BUDGET_EXHAUSTED,
-                    None,
-                    "time budget exhausted",
-                )
             try:
                 _validate_decision(decision)
                 serialized_decision = _serialize_decision(decision)
@@ -103,7 +175,18 @@ class Runner:
                     verification = VerificationResult(False, "final answer is empty")
                 else:
                     try:
-                        verification = self.verifier.verify(context, decision)
+                        verification = _call_before_deadline(
+                            lambda: _require_verification_result(
+                                self.verifier.verify(context, decision)
+                            ),
+                            deadline,
+                        )
+                    except _DeadlineExceeded as timeout:
+                        return self._finish_timeout(
+                            started.run_id,
+                            "verification",
+                            timeout,
+                        )
                     except Exception as error:
                         return self._fail_boundary(
                             started.run_id, "verification", error
@@ -123,8 +206,18 @@ class Runner:
                 result = self.tools.execute(decision)
             else:
                 try:
-                    policy_decision = authorize(
-                        tool, decision, self.policy, self.approval
+                    policy_decision = _call_before_deadline(
+                        lambda: _require_policy_decision(
+                            self.policy.evaluate(tool, decision)
+                        ),
+                        deadline,
+                    )
+                except _DeadlineExceeded as timeout:
+                    return self._finish_timeout(
+                        started.run_id,
+                        "policy",
+                        timeout,
+                        tool=decision.name,
                     )
                 except Exception as error:
                     return self._fail_boundary(started.run_id, "policy", error)
@@ -135,11 +228,55 @@ class Runner:
                 if policy_decision is PolicyDecision.DENY:
                     return self._finish(
                         started.run_id,
-                        RunStatus.APPROVAL_REFUSED,
+                        RunStatus.POLICY_DENIED,
                         None,
-                        "approval refused",
+                        f"policy denied tool: {decision.name}",
                     )
-                result = self.tools.execute(decision)
+                if policy_decision is PolicyDecision.APPROVAL_REQUIRED:
+                    self.events.record("approval_requested", {"tool": decision.name})
+                    try:
+                        approval_granted = _call_before_deadline(
+                            lambda: _require_approval_result(
+                                self.approval(tool, decision)
+                            ),
+                            deadline,
+                        )
+                    except _DeadlineExceeded as timeout:
+                        return self._finish_timeout(
+                            started.run_id,
+                            "approval",
+                            timeout,
+                            tool=decision.name,
+                        )
+                    except Exception as error:
+                        return self._fail_boundary(
+                            started.run_id, "approval", error
+                        )
+                    self.events.record(
+                        "approval_decision",
+                        {"tool": decision.name, "granted": approval_granted},
+                    )
+                    if not approval_granted:
+                        return self._finish(
+                            started.run_id,
+                            RunStatus.APPROVAL_REFUSED,
+                            None,
+                            f"approval refused for tool: {decision.name}",
+                        )
+                try:
+                    result = _call_before_deadline(
+                        lambda: self.tools.execute(decision),
+                        deadline,
+                    )
+                except _DeadlineExceeded as timeout:
+                    return self._finish_timeout(
+                        started.run_id,
+                        "tool",
+                        timeout,
+                        tool=decision.name,
+                    )
+                except Exception as error:
+                    return self._fail_boundary(started.run_id, "tool", error)
             self.events.record("tool_result", _serialize_tool_result(decision, result))
             if not result.ok and result.retryable:
                 error = result.error or "error"
@@ -180,6 +317,36 @@ class Runner:
             f"{boundary} error: {error_type}",
         )
 
+    def _finish_timeout(
+        self,
+        run_id: str,
+        boundary: str,
+        timeout: _DeadlineExceeded,
+        *,
+        tool: str | None = None,
+    ) -> RunResult:
+        payload: dict[str, object] = {
+            "boundary": boundary,
+            "call_may_still_be_running": timeout.call_may_still_be_running,
+            "late_result_ignored": timeout.call_started,
+        }
+        if tool is not None:
+            payload["tool"] = tool
+        self.events.record("timeout", payload)
+        reason = (
+            "time budget exhausted"
+            if boundary == "run"
+            else f"time budget exhausted during {boundary}"
+        )
+        if timeout.call_may_still_be_running:
+            reason += "; the timed-out call may still be running"
+        return self._finish(
+            run_id,
+            RunStatus.BUDGET_EXHAUSTED,
+            None,
+            reason,
+        )
+
     def _finish(
         self,
         run_id: str,
@@ -202,6 +369,16 @@ def _validate_decision(decision: object) -> None:
     if isinstance(decision, ToolCall):
         return
     raise TypeError("model returned an invalid decision")
+
+
+def _require_verification_result(value: object) -> VerificationResult:
+    if not isinstance(value, VerificationResult):
+        raise TypeError("verifier must return a VerificationResult")
+    if type(value.accepted) is not bool:
+        raise TypeError("verification acceptance must be a bool")
+    if not isinstance(value.reason, str):
+        raise TypeError("verification reason must be a string")
+    return value
 
 
 def _serialize_decision(decision: ToolCall | FinalAnswer) -> dict[str, object]:

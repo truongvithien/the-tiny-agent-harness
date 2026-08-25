@@ -33,7 +33,7 @@ def _normalize(value: object, secrets: tuple[str, ...], limit: int) -> object:
         if cleaned == "[REDACTED]":
             return cleaned
         return cleaned if len(cleaned) <= limit else cleaned[:limit] + "…[TRUNCATED]"
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return MappingProxyType(
             {str(key): _normalize(item, secrets, limit) for key, item in value.items()}
         )

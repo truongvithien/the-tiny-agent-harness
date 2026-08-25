@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping as MappingABC, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -22,7 +23,16 @@ class RunStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    POLICY_DENIED = "policy_denied"
     APPROVAL_REFUSED = "approval_refused"
+
+
+def _freeze(value: object) -> object:
+    if isinstance(value, MappingABC):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(_freeze(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -31,7 +41,9 @@ class ToolCall:
     arguments: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        if not isinstance(self.arguments, MappingABC):
+            raise TypeError("tool call arguments must be a mapping")
+        object.__setattr__(self, "arguments", _freeze(self.arguments))
 
 
 @dataclass(frozen=True)
@@ -72,6 +84,12 @@ class RunContext:
 class VerificationResult:
     accepted: bool
     reason: str
+
+    def __post_init__(self) -> None:
+        if type(self.accepted) is not bool:
+            raise TypeError("verification acceptance must be a bool")
+        if not isinstance(self.reason, str):
+            raise TypeError("verification reason must be a string")
 
 
 @dataclass(frozen=True)

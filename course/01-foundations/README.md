@@ -77,7 +77,7 @@ scripted model and a local dictionary, so it needs neither network access nor
 an API key. Run it from the repository root:
 
 ```bash
-.venv/bin/python3 -m examples.foundations_demo
+python -m examples.foundations_demo
 ```
 
 The three output lines show a `succeeded` status, the final answer, and the
@@ -87,7 +87,7 @@ JSON Lines stores one JSON object on each line. Pretty-print the trace from the
 repository root with:
 
 ```bash
-.venv/bin/python3 -m json.tool --json-lines .traces/foundations.jsonl
+python -m json.tool --json-lines .traces/foundations.jsonl
 ```
 
 Follow the sequence numbers. The scripted model requests `lookup_habitat`; the

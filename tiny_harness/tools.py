@@ -53,6 +53,12 @@ class ToolRegistry:
         if tool is None:
             return ToolResult(ok=False, error=f"unknown tool: {call.name}")
         try:
-            return tool.invoke(call.arguments)
+            result = tool.invoke(call.arguments)
         except Exception as error:
             return ToolResult(ok=False, error=f"tool {call.name} failed: {type(error).__name__}")
+        if not isinstance(result, ToolResult):
+            return ToolResult(
+                ok=False,
+                error=f"tool {call.name} returned an invalid result",
+            )
+        return result

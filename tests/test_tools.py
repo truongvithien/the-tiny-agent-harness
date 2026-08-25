@@ -1,3 +1,5 @@
+from typing import cast
+
 from tiny_harness.tools import FunctionTool, ToolRegistry
 from tiny_harness.types import Risk, ToolCall, ToolResult
 
@@ -59,3 +61,20 @@ def test_registry_rejects_duplicate_tool_names() -> None:
 def test_execute_returns_handler_result() -> None:
     result = ToolRegistry([make_echo()]).execute(ToolCall("echo", {"text": "hello"}))
     assert result == ToolResult(ok=True, output="hello")
+
+
+def test_execute_converts_malformed_handler_result_to_safe_failure() -> None:
+    malformed = FunctionTool(
+        name="malformed",
+        description="Return the wrong runtime type.",
+        input_schema={"type": "object"},
+        risk=Risk.READ,
+        handler=lambda _arguments: cast(ToolResult, "not a ToolResult"),
+    )
+
+    result = ToolRegistry([malformed]).execute(ToolCall("malformed", {}))
+
+    assert result == ToolResult(
+        ok=False,
+        error="tool malformed returned an invalid result",
+    )

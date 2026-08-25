@@ -12,6 +12,30 @@ def test_tool_call_copies_mutable_arguments() -> None:
     assert call.arguments == {"ticket_id": "T-1"}
 
 
+def test_tool_call_deeply_freezes_nested_model_arguments() -> None:
+    raw = {
+        "request": {
+            "recipients": ["learner@example.test"],
+            "metadata": {"priority": "normal"},
+        }
+    }
+
+    call = ToolCall(name="publish", arguments=raw)
+    raw["request"]["recipients"].append("changed@example.test")
+    raw["request"]["metadata"]["priority"] = "changed"
+
+    assert call.arguments == {
+        "request": {
+            "recipients": ("learner@example.test",),
+            "metadata": {"priority": "normal"},
+        }
+    }
+    with pytest.raises(AttributeError):
+        call.arguments["request"]["recipients"].append("tampered@example.test")
+    with pytest.raises(TypeError):
+        call.arguments["request"]["metadata"]["priority"] = "tampered"
+
+
 def test_tool_result_requires_an_error_when_unsuccessful() -> None:
     with pytest.raises(ValueError, match="error"):
         ToolResult(ok=False)

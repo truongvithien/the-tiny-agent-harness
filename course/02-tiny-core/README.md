@@ -17,8 +17,10 @@ Run every command below from the repository root, the directory containing
 A **contract** describes the shape and meaning of data passed across a boundary.
 The core starts in [`tiny_harness/types.py`](../../tiny_harness/types.py), which
 defines immutable contracts. `ToolCall` carries a requested tool name and
-arguments. `ToolResult` carries success or failure as data. `RunContext` is the
-compact state supplied for a decision, while `RunResult` is the terminal result.
+arguments, recursively freezing nested mappings and sequences so policy or
+approval code cannot change what will execute after the proposal is recorded.
+`ToolResult` carries success or failure as data. `RunContext` is the compact
+state supplied for a decision, while `RunResult` is the terminal result.
 
 [`tiny_harness/tools.py`](../../tiny_harness/tools.py) defines `Tool`, the
 contract for a bounded operation, and `ToolRegistry`, the allow-list that finds
@@ -42,6 +44,12 @@ contract and `RiskPolicy`. Its `evaluate` method returns a `PolicyDecision`:
 the approval callback when necessary. Policy runs before execution so a denied
 action cannot cause its effect first.
 
+`authorize` preserves both pieces of authorization evidence: the policy's
+original decision and, only when that decision is `APPROVAL_REQUIRED`, the
+callback's boolean response. The runner records the policy decision before it
+requests approval. A direct `DENY` ends with `policy_denied`; a person refusing
+an approval request ends with `approval_refused`.
+
 [`tiny_harness/events.py`](../../tiny_harness/events.py) defines an `EventSink`,
 which records ordered events. `MemoryEventSink` supports tests and
 `JsonlEventSink` persists one JSON object per line. The sink copies payloads,
@@ -62,7 +70,8 @@ In execution order it:
 1. records the task and acceptance criteria;
 2. builds the current context and asks the model for one decision;
 3. validates and records that decision;
-4. for a known tool, authorizes the call before asking `ToolRegistry` to
+4. for a known tool, records the policy decision, then records any approval
+   request and its strictly boolean response before asking `ToolRegistry` to
    execute it;
 5. records the `ToolResult` and adds it to the next context as an observation;
 6. for a final answer, rejects blank text itself or calls the verifier, records
@@ -72,6 +81,22 @@ In execution order it:
 
 At most one tool executes per iteration. This keeps every effect next to its
 policy decision and result in the trace.
+
+### What the wall-clock limit guarantees
+
+The runner gives each synchronous model, policy, approval, tool, and verifier
+call only the time remaining in the run budget. If a call misses the deadline,
+the runner records `timeout`, ignores any result that arrives later, finishes
+with `budget_exhausted`, and does not wait indefinitely. A verifier result that
+arrives after the deadline can therefore never produce success.
+
+An ordinary Python function cannot be force-cancelled safely once it is
+running. In particular, a timed-out tool may still finish an external side
+effect after the runner returns. The timeout event states whether the call may
+still be running and that a late result will be ignored; it never claims the
+call or side effect was cancelled. Real tools should also use their own I/O
+timeouts and, when risk warrants it, operations designed to be safely retried
+or cancelled.
 
 [`tiny_harness/verification.py`](../../tiny_harness/verification.py) defines
 `Verifier.verify`. A verifier turns a proposed `FinalAnswer` and its context
@@ -90,15 +115,20 @@ implementations remain in the focused files above.
 | --- | --- | --- |
 | `run_started` | `Runner.run` | Captures the task and acceptance criteria before work begins. |
 | `model_decision` | Runner, immediately after `ModelAdapter` | Preserves the validated proposal before policy or execution. |
-| `policy_decision` | Runner, immediately after `authorize` | Shows the decision that guarded a known tool effect. |
+| `policy_decision` | Runner, immediately after `Policy.evaluate` | Preserves `ALLOW`, `DENY`, or `APPROVAL_REQUIRED` without collapsing it into a later outcome. |
+| `approval_requested` | Runner, before the approval callback | Proves a person was asked before a consequential effect. |
+| `approval_decision` | Runner, after the approval callback | Records whether that request was granted. |
 | `tool_result` | Runner, immediately after `ToolRegistry.execute` | Records success or safe failure before it becomes an observation. |
 | `verification` | Runner, after either rejecting a blank answer itself or calling `Verifier.verify` | Preserves the decision behind acceptance or rejection. |
-| `model_error`, `policy_error`, or `verification_error` | Runner's matching exception boundary | Records the safe exception type without leaking raw details. |
+| `timeout` | Runner's wall-clock boundary | Names the timed-out boundary, whether its call may still run, and that a late result is ignored. |
+| `model_error`, `policy_error`, `approval_error`, `tool_error`, or `verification_error` | Runner's matching exception boundary | Records the safe exception type without leaking raw details. |
 | `run_finished` | `Runner._finish` | Records the terminal status, answer, and reason. |
 
 An unknown tool has no tool object to authorize, so it produces a failed
 `tool_result` but no `policy_decision`. A refused consequential action produces
-a `policy_decision` followed by `run_finished`; execution never occurs.
+`policy_decision`, `approval_requested`, and `approval_decision` before
+`run_finished`; execution never occurs. A direct policy denial has no approval
+events because no person was asked.
 
 ## Exercise: complete the risk policy
 
@@ -112,9 +142,6 @@ root:
 ```bash
 python course/02-tiny-core/check_exercise.py
 ```
-
-If the environment is not activated on macOS or Linux, the equivalent command
-is `.venv/bin/python3 course/02-tiny-core/check_exercise.py`.
 
 It checks all three risks, prints one `✓` or `✗` for each case, and exits with
 status 1 until every case passes. Keep the function small; this puzzle is about
@@ -140,7 +167,7 @@ After your checker passes, compare your reasoning with the
 reference without changing your learner file, run:
 
 ```bash
-.venv/bin/python3 course/02-tiny-core/check_exercise.py --solution
+python course/02-tiny-core/check_exercise.py --solution
 ```
 
 ## Recap

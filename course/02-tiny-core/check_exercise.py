@@ -17,17 +17,31 @@ CASES = (
 )
 
 
+class _MissingDecide(Exception):
+    pass
+
+
 def load_decide(path: Path) -> Callable[[Risk], PolicyDecision]:
     spec = importlib.util.spec_from_file_location("policy_exercise", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load exercise: {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.decide
+    decide = getattr(module, "decide", None)
+    if not callable(decide):
+        raise _MissingDecide
+    return decide
 
 
 def check(path: Path) -> bool:
-    decide = load_decide(path)
+    try:
+        decide = load_decide(path)
+    except _MissingDecide:
+        print("✗ exercise could not be loaded: missing callable decide")
+        return False
+    except Exception as error:
+        print(f"✗ exercise could not be loaded: {type(error).__name__}")
+        return False
     all_passed = True
     for risk, expected in CASES:
         try:

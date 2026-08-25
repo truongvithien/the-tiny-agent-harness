@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 
 from tiny_harness.policy import RiskPolicy, authorize
@@ -28,20 +30,57 @@ def test_risk_policy_classifies_actions(risk: Risk, expected: PolicyDecision) ->
 
 
 def test_authorize_denies_consequential_action_when_approval_is_refused() -> None:
-    decision = authorize(
+    authorization = authorize(
         tool(Risk.CONSEQUENTIAL),
         ToolCall("action", {}),
         RiskPolicy(),
         approval=lambda _tool, _call: False,
     )
-    assert decision is PolicyDecision.DENY
+    assert authorization.policy_decision is PolicyDecision.APPROVAL_REQUIRED
+    assert authorization.approval_granted is False
+    assert not authorization.allowed
 
 
 def test_authorize_allows_consequential_action_when_approval_is_granted() -> None:
-    decision = authorize(
+    authorization = authorize(
         tool(Risk.CONSEQUENTIAL),
         ToolCall("action", {}),
         RiskPolicy(),
         approval=lambda _tool, _call: True,
     )
-    assert decision is PolicyDecision.ALLOW
+    assert authorization.policy_decision is PolicyDecision.APPROVAL_REQUIRED
+    assert authorization.approval_granted is True
+    assert authorization.allowed
+
+
+def test_risk_policy_rejects_an_invalid_runtime_risk() -> None:
+    invalid = tool(cast(Risk, "consequential"))
+
+    with pytest.raises(TypeError, match="risk"):
+        RiskPolicy().evaluate(invalid, ToolCall("action", {}))
+
+
+def test_authorize_rejects_a_non_boolean_approval() -> None:
+    with pytest.raises(TypeError, match="approval"):
+        authorize(
+            tool(Risk.CONSEQUENTIAL),
+            ToolCall("action", {}),
+            RiskPolicy(),
+            approval=lambda _tool, _call: cast(bool, "no"),
+        )
+
+
+def test_authorize_rejects_an_invalid_policy_decision() -> None:
+    class InvalidPolicy:
+        def evaluate(
+            self, _tool: FunctionTool, _call: ToolCall
+        ) -> PolicyDecision:
+            return cast(PolicyDecision, "allow")
+
+    with pytest.raises(TypeError, match="policy decision"):
+        authorize(
+            tool(Risk.READ),
+            ToolCall("action", {}),
+            InvalidPolicy(),
+            approval=lambda _tool, _call: False,
+        )
