@@ -15,6 +15,7 @@ from .types import (
 )
 from .tools import FunctionTool, Tool, ToolRegistry
 from .policy import ApprovalCallback, Policy, RiskPolicy, authorize
+from .events import Event, EventSink, JsonlEventSink, MemoryEventSink
 
 __version__ = "0.1.0"
 
@@ -37,5 +38,9 @@ __all__ = [
     "RiskPolicy",
     "ApprovalCallback",
     "authorize",
+    "Event",
+    "EventSink",
+    "JsonlEventSink",
+    "MemoryEventSink",
     "__version__",
 ]
