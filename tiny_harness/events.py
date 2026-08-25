@@ -5,7 +5,22 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
+
+
+class _FrozenDict(dict[str, object]):
+    def _immutable(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("event payload is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+    __ior__ = _immutable
 
 
 @dataclass(frozen=True)
@@ -27,15 +42,17 @@ class EventSink(Protocol):
 def _normalize(value: object, secrets: tuple[str, ...], limit: int) -> object:
     if isinstance(value, str):
         cleaned = value
-        for secret in secrets:
+        for secret in sorted(secrets, key=len, reverse=True):
             cleaned = cleaned.replace(secret, "[REDACTED]")
         if cleaned == "[REDACTED]":
             return cleaned
         return cleaned if len(cleaned) <= limit else cleaned[:limit] + "…[TRUNCATED]"
     if isinstance(value, dict):
-        return {str(key): _normalize(item, secrets, limit) for key, item in value.items()}
+        return _FrozenDict(
+            {str(key): _normalize(item, secrets, limit) for key, item in value.items()}
+        )
     if isinstance(value, (list, tuple)):
-        return [_normalize(item, secrets, limit) for item in value]
+        return tuple(_normalize(item, secrets, limit) for item in value)
     return value
 
 
@@ -66,7 +83,10 @@ class MemoryEventSink:
             timestamp=datetime.now(UTC).isoformat(),
             run_id=self._run_id,
             kind=kind,
-            payload=_normalize(payload, self._secrets, self._max_string_length),
+            payload=cast(
+                dict[str, object],
+                _normalize(payload, self._secrets, self._max_string_length),
+            ),
         )
         self._events.append(event)
         return event
