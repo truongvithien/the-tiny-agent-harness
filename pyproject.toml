@@ -13,10 +13,11 @@ dependencies = []
 dev = ["pytest>=8,<9"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --strict-markers -m 'not learner and not live'"
 testpaths = ["tests"]
 markers = [
-  "learner: exercises that intentionally fail until a learner completes them",
+  "learner: intentionally incomplete learner exercise contract",
+  "live: opt-in tests that require external services",
 ]
 
 [tool.hatch.build.targets.wheel]
