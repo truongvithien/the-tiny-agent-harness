@@ -65,7 +65,8 @@ In execution order it:
 4. for a known tool, authorizes the call before asking `ToolRegistry` to
    execute it;
 5. records the `ToolResult` and adds it to the next context as an observation;
-6. for a final answer, calls the verifier and returns a terminal result; and
+6. for a final answer, rejects blank text itself or calls the verifier, records
+   the verification result, and returns a terminal result; and
 7. stops early if a time, iteration, retry, approval, or error boundary says it
    must stop.
 
@@ -91,7 +92,7 @@ implementations remain in the focused files above.
 | `model_decision` | Runner, immediately after `ModelAdapter` | Preserves the validated proposal before policy or execution. |
 | `policy_decision` | Runner, immediately after `authorize` | Shows the decision that guarded a known tool effect. |
 | `tool_result` | Runner, immediately after `ToolRegistry.execute` | Records success or safe failure before it becomes an observation. |
-| `verification` | Runner, immediately after `Verifier.verify` | Preserves the evidence decision behind success or failure. |
+| `verification` | Runner, after either rejecting a blank answer itself or calling `Verifier.verify` | Preserves the decision behind acceptance or rejection. |
 | `model_error`, `policy_error`, or `verification_error` | Runner's matching exception boundary | Records the safe exception type without leaking raw details. |
 | `run_finished` | `Runner._finish` | Records the terminal status, answer, and reason. |
 
@@ -105,11 +106,15 @@ Open [`exercise.py`](exercise.py). Its `decide` function receives a `Risk` and
 must return the corresponding `PolicyDecision`. The starter raises
 `NotImplementedError` on purpose.
 
-Run the checker from the repository root:
+With your virtual environment activated, run the checker from the repository
+root:
 
 ```bash
-.venv/bin/python3 course/02-tiny-core/check_exercise.py
+python course/02-tiny-core/check_exercise.py
 ```
+
+If the environment is not activated on macOS or Linux, the equivalent command
+is `.venv/bin/python3 course/02-tiny-core/check_exercise.py`.
 
 It checks all three risks, prints one `✓` or `✗` for each case, and exits with
 status 1 until every case passes. Keep the function small; this puzzle is about

@@ -46,6 +46,7 @@ def test_reference_solution_satisfies_policy_contract(
     assert decide(risk) is expected
 
 
+@pytest.mark.learner
 def test_checker_reports_all_incomplete_learner_cases() -> None:
     result = subprocess.run(
         [sys.executable, "course/02-tiny-core/check_exercise.py"],
