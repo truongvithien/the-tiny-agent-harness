@@ -237,3 +237,7 @@ Related reading: [Part 1: Foundations](../01-foundations/README.md), the
 [bounded runner](../../tiny_harness/runner.py), the
 [implementation plan](../../docs/superpowers/plans/2026-08-27-support-triage-lab.md),
 and the [course design specification](../../docs/superpowers/specs/2026-08-25-tiny-agent-harness-course-design.md).
+
+Continue to [Part 4: Research laboratory](../04-research-agent/README.md), where
+every tool is read-only and completion must be backed by captured evidence
+rather than an approval.

@@ -176,3 +176,7 @@ The tiny core passes explicit data across narrow boundaries: the model proposes
 a `ToolCall`, policy authorizes it, the registry executes one bounded tool, the
 event sink records the result, and the verifier controls successful completion.
 The risk puzzle practices the boundary that must run before an effect.
+
+Continue to [Part 3: Support-triage laboratory](../03-support-triage/README.md),
+which puts these boundaries to work on a synthetic ticket store and adds a
+human approval gate before a consequential action.
