@@ -1,0 +1,8 @@
+{
+  "ticket_id": "T-1043",
+  "customer": "Ravi Menon",
+  "channel": "web_form",
+  "received_at": "2026-08-21T14:02:00Z",
+  "subject": "Locked out after too many sign-in attempts",
+  "body": "I mistyped my password several times and now the app says my account is locked. I still have access to the email address on the account. How do I get back in?"
+}
