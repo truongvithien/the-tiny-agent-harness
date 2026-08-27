@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "the-tiny-agent-harness"
+version = "0.1.0"
+description = "A beginner course for building a tiny, observable agent harness."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers -m 'not learner and not live'"
+testpaths = ["tests"]
+markers = [
+  "learner: intentionally incomplete learner exercise contract",
+  "live: opt-in tests that require external services",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["tiny_harness"]
