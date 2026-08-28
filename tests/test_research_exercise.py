@@ -93,8 +93,7 @@ def test_reference_solution_satisfies_evidence_contract(
     assert unsupported(claims, fetched) == expected
 
 
-@pytest.mark.learner
-def test_checker_reports_all_incomplete_learner_cases(
+def test_checker_reports_all_unimplemented_cases(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     exercise = tmp_path / "exercise.py"
@@ -169,9 +168,17 @@ def test_checker_accepts_reference_solution() -> None:
     ]
 
 
-def test_checker_rejects_the_incomplete_learner_exercise() -> None:
+def test_checker_cli_rejects_an_unimplemented_exercise(tmp_path: Path) -> None:
+    exercise = tmp_path / "exercise.py"
+    exercise.write_text(INCOMPLETE_EXERCISE, encoding="utf-8")
+
     result = subprocess.run(
-        [sys.executable, "course/04-research-agent/check_exercise.py"],
+        [
+            sys.executable,
+            "course/04-research-agent/check_exercise.py",
+            "--exercise",
+            str(exercise),
+        ],
         capture_output=True,
         text=True,
         check=False,
