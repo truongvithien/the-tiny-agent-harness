@@ -1,0 +1,8 @@
+{
+  "ticket_id": "T-1044",
+  "customer": "Ingrid Sollers",
+  "channel": "email",
+  "received_at": "2026-08-22T07:48:00Z",
+  "subject": "CSV export finishes with an empty file",
+  "body": "Exporting the August report produces a file with only the header row. The same export worked last week. Nothing appears in the browser console and no error is shown."
+}
