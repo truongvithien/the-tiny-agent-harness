@@ -355,3 +355,7 @@ decided which commands existed for it. A policy turned both decisions into
 `DENY` before any effect occurred, and a timeout bounded the one command that
 could run. Completion required a recorded exit code of 0 — evidence produced by
 a bounded action — rather than the model's own report of success.
+
+Continue to [Part 6: OpenAI integration](../06-openai-integration/README.md),
+which swaps the scripted model for a live provider behind one adapter while
+every boundary in this lab stays exactly as it is.

@@ -289,7 +289,8 @@ can still fail, which is exactly why verification is a separate boundary from
 policy. When two fetched sources disagree, the harness insists the report say
 so.
 
-Part 5, the software-development laboratory, moves from reading to changing
-files and reintroduces the risk classes this lab did not need. For the full
+Continue to [Part 5: Software-development laboratory](../05-coding-agent/README.md),
+which moves from reading to changing files and reintroduces the risk classes
+this lab did not need. For the full
 seven-part plan, read the
 [course design specification](../../docs/superpowers/specs/2026-08-25-tiny-agent-harness-course-design.md).

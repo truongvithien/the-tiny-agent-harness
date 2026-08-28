@@ -183,7 +183,7 @@ cannot represent. Because the harness owns the types, one small file swaps a
 scripted model for a live one while policy, traces, budgets, and verification
 stay exactly as they were.
 
-Part 7, the capstone, asks you to extend this harness with one tool or policy of
-your own. Revisit [Part 2: The Tiny Core](../02-tiny-core/README.md) to see the
+Continue to [Part 7: Capstone](../07-capstone/README.md), which asks you to
+extend this harness with one tool or policy of your own. Revisit [Part 2: The Tiny Core](../02-tiny-core/README.md) to see the
 contracts this adapter satisfies. The full progression is described in the
 [course design specification](../../docs/superpowers/specs/2026-08-25-tiny-agent-harness-course-design.md).
