@@ -23,6 +23,14 @@ CONTRACT = [
     (Risk.CONSEQUENTIAL, "billing", None, PolicyDecision.DENY),
 ]
 
+UNIMPLEMENTED_EXERCISE = """\
+from tiny_harness.types import PolicyDecision, Risk
+
+
+def decide(risk, category, draft) -> PolicyDecision:
+    raise NotImplementedError("complete the evidence-aware approval gate from Lesson 3")
+"""
+
 EXPECTED_SOLUTION_OUTPUT = [
     "✓ read without evidence: allow",
     "✓ write without evidence: allow",
@@ -70,20 +78,11 @@ def test_reference_solution_satisfies_approval_gate_contract(
     assert decide(risk, category, draft) is expected
 
 
-@pytest.mark.learner
-def test_checker_reports_every_incomplete_learner_case(
+def test_checker_reports_every_unimplemented_case(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     exercise = tmp_path / "exercise.py"
-    exercise.write_text(
-        """\
-from tiny_harness.types import PolicyDecision, Risk
-
-def decide(risk, category, draft) -> PolicyDecision:
-    raise NotImplementedError("complete the evidence-aware approval gate from Lesson 3")
-""",
-        encoding="utf-8",
-    )
+    exercise.write_text(UNIMPLEMENTED_EXERCISE, encoding="utf-8")
 
     assert load_checker().check(exercise) is False
     lines = capsys.readouterr().out.splitlines()
@@ -155,9 +154,17 @@ def test_checker_accepts_the_reference_solution() -> None:
     assert result.stdout.splitlines() == EXPECTED_SOLUTION_OUTPUT
 
 
-def test_checker_rejects_the_incomplete_learner_exercise() -> None:
+def test_checker_cli_rejects_an_unimplemented_exercise(tmp_path: Path) -> None:
+    exercise = tmp_path / "exercise.py"
+    exercise.write_text(UNIMPLEMENTED_EXERCISE, encoding="utf-8")
+
     result = subprocess.run(
-        [sys.executable, "course/03-support-triage/check_exercise.py"],
+        [
+            sys.executable,
+            "course/03-support-triage/check_exercise.py",
+            "--exercise",
+            str(exercise),
+        ],
         capture_output=True,
         text=True,
         check=False,

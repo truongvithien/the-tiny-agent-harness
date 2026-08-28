@@ -56,8 +56,7 @@ def test_reference_solution_satisfies_policy_contract(
     assert decide(risk) is expected
 
 
-@pytest.mark.learner
-def test_checker_reports_all_incomplete_learner_cases(
+def test_checker_reports_all_unimplemented_cases(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     exercise = tmp_path / "exercise.py"

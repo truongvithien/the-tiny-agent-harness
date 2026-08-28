@@ -104,9 +104,18 @@ def main() -> int:
         action="store_true",
         help="check the reference solution instead of the learner exercise",
     )
+    parser.add_argument(
+        "--exercise",
+        type=Path,
+        default=None,
+        help="check this file instead of the course or solution exercise",
+    )
     arguments = parser.parse_args()
-    base = "solutions" if arguments.solution else "course"
-    path = ROOT / base / "03-support-triage" / "exercise.py"
+    if arguments.exercise is not None:
+        path = arguments.exercise
+    else:
+        base = "solutions" if arguments.solution else "course"
+        path = ROOT / base / "03-support-triage" / "exercise.py"
     return 0 if check(path) else 1
 
 

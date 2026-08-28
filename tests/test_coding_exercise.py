@@ -20,6 +20,14 @@ EXPECTED_SOLUTION_OUTPUT = [
     "✓ sibling with a shared prefix: rejected",
     "✓ symlink to outside: rejected",
 ]
+UNIMPLEMENTED_EXERCISE = """\
+from pathlib import Path
+
+
+def is_inside(workspace_root: Path | str, candidate: Path | str) -> bool:
+    raise NotImplementedError("complete the containment check from Lesson 5")
+"""
+
 NAIVE_PREFIX_EXERCISE = """\
 from pathlib import Path
 
@@ -86,11 +94,13 @@ def test_reference_solution_satisfies_containment_contract(tmp_path: Path) -> No
         assert is_inside(root, candidate) is expected
 
 
-@pytest.mark.learner
-def test_checker_reports_every_incomplete_learner_case(
-    capsys: pytest.CaptureFixture[str],
+def test_checker_reports_every_unimplemented_case(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert load_checker().check(LEARNER_EXERCISE) is False
+    exercise = tmp_path / "exercise.py"
+    exercise.write_text(UNIMPLEMENTED_EXERCISE, encoding="utf-8")
+
+    assert load_checker().check(exercise) is False
     printed = capsys.readouterr().out.splitlines()
     assert len(printed) == len(EXPECTED_SOLUTION_OUTPUT)
     assert all(
@@ -171,10 +181,12 @@ def test_checker_accepts_reference_solution() -> None:
     assert result.stdout.splitlines() == EXPECTED_SOLUTION_OUTPUT
 
 
-@pytest.mark.learner
-def test_checker_rejects_the_incomplete_learner_exercise() -> None:
+def test_checker_cli_rejects_an_unimplemented_exercise(tmp_path: Path) -> None:
+    exercise = tmp_path / "exercise.py"
+    exercise.write_text(UNIMPLEMENTED_EXERCISE, encoding="utf-8")
+
     result = subprocess.run(
-        [sys.executable, str(CHECKER)],
+        [sys.executable, str(CHECKER), "--exercise", str(exercise)],
         capture_output=True,
         text=True,
         check=False,
